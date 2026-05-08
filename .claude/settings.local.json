@@ -14,7 +14,17 @@
       "Bash(python -m venv .venv)",
       "Bash(.venv/Scripts/alembic upgrade *)",
       "Bash(.venv/Scripts/python -c ' *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(railway up *)",
+      "Bash(railway logs *)",
+      "Bash(railway --help)",
+      "PowerShell(Get-Content *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['projects']; [print\\(k,v.get\\('service'\\),v.get\\('project'\\)\\) for k,v in d.items\\(\\) if 'jushu' in k.lower\\(\\) or '45a08a45' in str\\(v\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['projects']; [print\\(k,'->',v.get\\('service'\\)\\) for k,v in d.items\\(\\) if '45a08a45' in str\\(v\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['projects']; [print\\(k,'->',v.get\\('service'\\)\\) for k,v in d.items\\(\\) if 'jushu' in k.lower\\(\\)]\")",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
