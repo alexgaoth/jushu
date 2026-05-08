@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Sequence
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -107,15 +108,13 @@ async def process_text(db: AsyncSession, raw_text) -> int:
                 db.add(tag)
                 await db.flush()
 
-            # Upsert pattern-tag link
-            pt_result = await db.execute(
-                select(PatternTag).where(
-                    PatternTag.pattern_id == pattern.id,
-                    PatternTag.tag_id == tag.id,
-                )
+            # Upsert pattern-tag link — ON CONFLICT DO NOTHING avoids
+            # duplicate errors when the same tag appears in the same session batch
+            await db.execute(
+                pg_insert(PatternTag)
+                .values(pattern_id=pattern.id, tag_id=tag.id)
+                .on_conflict_do_nothing()
             )
-            if pt_result.scalar_one_or_none() is None:
-                db.add(PatternTag(pattern_id=pattern.id, tag_id=tag.id))
 
     # Mark raw_text as processed
     raw_text.processed = True
@@ -142,18 +141,19 @@ async def run_pipeline(since: Optional[datetime] = None) -> None:
         total_new_patterns = 0
 
         for raw_text in raw_texts:
+            raw_text_id = raw_text.id  # capture before any potential rollback
             try:
                 new_patterns = await process_text(db, raw_text)
                 total_new_patterns += new_patterns
                 total_processed += 1
 
-                # Flush every 50 records to avoid huge transactions
+                # Commit every 50 records to keep transactions short
                 if total_processed % 50 == 0:
-                    await db.flush()
+                    await db.commit()
                     logger.info("  ... processed %d texts so far", total_processed)
 
             except Exception as exc:
-                logger.error("Error processing raw_text id=%d: %s", raw_text.id, exc)
+                logger.error("Error processing raw_text id=%d: %s", raw_text_id, exc)
                 await db.rollback()
                 continue
 

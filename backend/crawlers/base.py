@@ -5,9 +5,10 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RawText
@@ -28,7 +29,6 @@ def sha256_hash(text: str) -> str:
 
 
 async def polite_delay(min_s: float = 1.0, max_s: float = 2.0) -> None:
-    """Sleep for a random interval to be polite to remote servers."""
     delay = random.uniform(min_s, max_s)
     logger.debug("Polite delay: %.2fs", delay)
     await asyncio.sleep(delay)
@@ -37,15 +37,15 @@ async def polite_delay(min_s: float = 1.0, max_s: float = 2.0) -> None:
 class BaseCrawler(ABC):
     """Abstract base class for all platform crawlers."""
 
-    def __init__(self, db: AsyncSession, max_pages: int = 5) -> None:
-        self.db = db
+    def __init__(self, session_factory: Any, max_pages: int = 5) -> None:
+        self.session_factory = session_factory
         self.max_pages = max_pages
         self.client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "BaseCrawler":
         self.client = httpx.AsyncClient(
             headers=DEFAULT_HEADERS,
-            timeout=httpx.Timeout(15.0, connect=5.0),
+            timeout=httpx.Timeout(30.0, connect=5.0),
             follow_redirects=True,
         )
         return self
@@ -68,37 +68,32 @@ class BaseCrawler(ABC):
         raw_content: str,
         source_url: Optional[str] = None,
         timestamp: Optional[datetime] = None,
-    ) -> Optional[RawText]:
+    ) -> bool:
         """
-        Insert a raw text record into the DB with deduplication via SHA-256.
-        Returns the new record, or None if it already existed.
+        Insert a raw text record using a short-lived session (no long-held connection).
+        Returns True if inserted, False if duplicate.
         """
-        from sqlalchemy import select
-
         content_hash = sha256_hash(raw_content)
 
-        # Deduplication check
-        existing = await self.db.execute(
-            select(RawText.id).where(RawText.content_hash == content_hash)
-        )
-        if existing.scalar_one_or_none() is not None:
-            logger.debug("Skipping duplicate content (hash=%s)", content_hash[:12])
-            return None
+        async with self.session_factory() as db:
+            existing = await db.execute(
+                select(RawText.id).where(RawText.content_hash == content_hash)
+            )
+            if existing.scalar_one_or_none() is not None:
+                return False
 
-        raw = RawText(
-            platform=platform,
-            content_type=content_type,
-            raw_content=raw_content,
-            content_hash=content_hash,
-            source_url=source_url,
-            timestamp=timestamp or datetime.now(timezone.utc),
-            processed=False,
-        )
-        self.db.add(raw)
-        await self.db.flush()  # get the auto-generated id without full commit
-        return raw
+            raw = RawText(
+                platform=platform,
+                content_type=content_type,
+                raw_content=raw_content,
+                content_hash=content_hash,
+                source_url=source_url,
+                timestamp=timestamp or datetime.now(timezone.utc),
+                processed=False,
+            )
+            db.add(raw)
+            await db.commit()
+            return True
 
     @abstractmethod
-    async def crawl(self) -> None:
-        """Subclasses implement the main crawl logic here."""
-        ...
+    async def crawl(self) -> None: ...

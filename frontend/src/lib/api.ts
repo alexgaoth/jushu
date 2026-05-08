@@ -1,12 +1,12 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Frontend types (used by components) ─────────────────────────────────────
 
 export interface Tag {
   id: number;
   name: string;
   slug: string;
-  color?: string;
+  category?: string;
   count?: number;
 }
 
@@ -15,21 +15,16 @@ export interface Example {
   pattern_id: number;
   text: string;
   source?: string;
-  likes?: number;
-  created_at?: string;
 }
 
 export interface Pattern {
   id: number;
   template: string;
-  description?: string;
   tags: Tag[];
   examples: Example[];
   example_count: number;
   usage_count: number;
   created_at: string;
-  updated_at?: string;
-  trending_score?: number;
 }
 
 export interface SearchResult {
@@ -41,15 +36,13 @@ export interface SearchResult {
   query: string;
 }
 
-export interface GenerateResult {
-  text: string;
-  pattern_id: number;
-  slots: Record<string, string>;
-}
-
 export interface TrendingResult {
   items: Pattern[];
   range: string;
+}
+
+export interface GenerateResult {
+  sentence: string;
 }
 
 export interface ExamplesResult {
@@ -67,89 +60,185 @@ export interface BrowseResult {
   pages: number;
 }
 
-// ─── HTTP helpers ─────────────────────────────────────────────────────────────
+// ─── API response shapes (what the backend actually returns) ──────────────────
+
+interface ApiTag {
+  id: number;
+  name: string;
+  category: string;
+  pattern_count?: number;
+}
+
+interface ApiPatternSummary {
+  id: number;
+  template_text: string;
+  source_count: number;
+  example_count: number;
+  example: string | null;
+  tags: ApiTag[];
+}
+
+interface ApiSearchResponse {
+  total: number;
+  page: number;
+  size: number;
+  results: ApiPatternSummary[];
+}
+
+interface ApiTrendingResponse {
+  range: string;
+  results: ApiPatternSummary[];
+}
+
+interface ApiTagsResponse {
+  total: number;
+  tags: ApiTag[];
+}
+
+interface ApiPatternDetail {
+  id: number;
+  template_text: string;
+  source_count: number;
+  example_count: number;
+  tags: ApiTag[];
+  examples: Array<{ id: number; content: string; slot_fillings: Record<string, string> | null }>;
+  created_at: string;
+}
+
+interface ApiExamplesResponse {
+  total: number;
+  page: number;
+  size: number;
+  examples: Array<{ id: number; pattern_id: number; content: string; slot_fillings: Record<string, string> | null }>;
+}
+
+interface ApiGenerateResponse {
+  sentence: string;
+}
+
+// ─── Normalisers ─────────────────────────────────────────────────────────────
+
+function normaliseTag(t: ApiTag): Tag {
+  return { id: t.id, name: t.name, slug: t.name, category: t.category, count: t.pattern_count };
+}
+
+function normaliseSummary(p: ApiPatternSummary): Pattern {
+  return {
+    id: p.id,
+    template: p.template_text,
+    tags: (p.tags || []).map(normaliseTag),
+    examples: p.example ? [{ id: 0, pattern_id: p.id, text: p.example }] : [],
+    example_count: p.example_count ?? 0,
+    usage_count: p.source_count ?? 0,
+    created_at: '',
+  };
+}
+
+function normaliseDetail(p: ApiPatternDetail): Pattern {
+  return {
+    id: p.id,
+    template: p.template_text,
+    tags: (p.tags || []).map(normaliseTag),
+    examples: (p.examples || []).map((e) => ({
+      id: e.id,
+      pattern_id: p.id,
+      text: e.content,
+    })),
+    example_count: p.example_count ?? 0,
+    usage_count: p.source_count ?? 0,
+    created_at: p.created_at ?? '',
+  };
+}
+
+// ─── HTTP helper ──────────────────────────────────────────────────────────────
 
 async function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
   const url = new URL(`${API_BASE}${path}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) {
-        url.searchParams.set(k, String(v));
-      }
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     });
   }
   const res = await fetch(url.toString(), {
-    headers: { 'Accept': 'application/json' },
-    next: { revalidate: 30 },
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
   });
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
   return res.json() as Promise<T>;
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${res.statusText}`);
-  }
-  return res.json() as Promise<T>;
+// ─── Public API functions ─────────────────────────────────────────────────────
+
+export async function searchPatterns(q: string, page = 1, size = 20): Promise<SearchResult> {
+  const raw = await get<ApiSearchResponse>('/api/search', { q, page, size });
+  const results = raw.results || [];
+  const pages = raw.total > 0 ? Math.ceil(raw.total / (raw.size || size)) : 1;
+  return {
+    items: results.map(normaliseSummary),
+    total: raw.total,
+    page: raw.page,
+    size: raw.size,
+    pages,
+    query: q,
+  };
 }
 
-// ─── API functions ────────────────────────────────────────────────────────────
-
-export async function searchPatterns(
-  q: string,
-  page: number = 1,
-  size: number = 20
-): Promise<SearchResult> {
-  return get<SearchResult>('/api/search', { q, page, size });
+export async function getTrending(range = 'week'): Promise<TrendingResult> {
+  const raw = await get<ApiTrendingResponse>('/api/trending', { range });
+  return {
+    range: raw.range,
+    items: (raw.results || []).map(normaliseSummary),
+  };
 }
 
 export async function getPattern(id: number): Promise<Pattern> {
-  return get<Pattern>(`/api/patterns/${id}`);
+  const raw = await get<ApiPatternDetail>(`/api/patterns/${id}`);
+  return normaliseDetail(raw);
+}
+
+export async function getTags(): Promise<Tag[]> {
+  const raw = await get<ApiTagsResponse>('/api/tags');
+  return (raw.tags || []).map(normaliseTag);
 }
 
 export async function generateFromPattern(
   id: number,
   slots: Record<string, string>
 ): Promise<GenerateResult> {
-  return post<GenerateResult>(`/api/patterns/${id}/generate`, { slots });
+  const params: Record<string, string> = {};
+  Object.entries(slots).forEach(([k, v]) => { params[k] = v; });
+  const raw = await get<ApiGenerateResponse>(`/api/patterns/${id}/generate`, params);
+  return { sentence: raw.sentence };
 }
 
-export async function getTags(): Promise<Tag[]> {
-  return get<Tag[]>('/api/tags');
+export async function getExamples(patternId: number, page = 1, sort = 'hot'): Promise<ExamplesResult> {
+  const raw = await get<ApiExamplesResponse>('/api/examples', { pattern_id: patternId, page, sort });
+  return {
+    total: raw.total,
+    page: raw.page,
+    size: raw.size,
+    items: (raw.examples || []).map((e) => ({
+      id: e.id,
+      pattern_id: patternId,
+      text: e.content,
+    })),
+  };
 }
 
-export async function getTrending(range: string = 'week'): Promise<TrendingResult> {
-  return get<TrendingResult>('/api/trending', { range });
+export async function browsePatterns(page = 1, size = 24, tag?: string, sort = 'hot'): Promise<BrowseResult> {
+  const raw = await get<ApiSearchResponse>('/api/search', { q: tag || '', page, size });
+  const results = raw.results || [];
+  const pages = raw.total > 0 ? Math.ceil(raw.total / (raw.size || size)) : 1;
+  return {
+    items: results.map(normaliseSummary),
+    total: raw.total,
+    page: raw.page,
+    size: raw.size,
+    pages,
+  };
 }
 
-export async function getExamples(
-  patternId: number,
-  page: number = 1,
-  sort: string = 'likes'
-): Promise<ExamplesResult> {
-  return get<ExamplesResult>(`/api/patterns/${patternId}/examples`, { page, sort });
-}
-
-export async function browsePatterns(
-  page: number = 1,
-  size: number = 24,
-  tag?: string,
-  sort: string = 'usage'
-): Promise<BrowseResult> {
-  return get<BrowseResult>('/api/patterns', { page, size, tag, sort });
-}
-
-// ─── Template parsing ─────────────────────────────────────────────────────────
+// ─── Template utilities ───────────────────────────────────────────────────────
 
 export interface SlotInfo {
   name: string;

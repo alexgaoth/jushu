@@ -24,7 +24,14 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['projects']; [print\\(k,'->',v.get\\('service'\\)\\) for k,v in d.items\\(\\) if '45a08a45' in str\\(v\\)]\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['projects']; [print\\(k,'->',v.get\\('service'\\)\\) for k,v in d.items\\(\\) if 'jushu' in k.lower\\(\\)]\")",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(railway domain *)",
+      "Bash(curl -s https://backend-production-b36f0.up.railway.app/health)",
+      "Bash(curl -s \"https://backend-production-b36f0.up.railway.app/api/tags\")",
+      "Bash(curl -s \"https://backend-production-b36f0.up.railway.app/api/trending\")",
+      "Bash(.venv/Scripts/python -m nlp.run_pipeline)",
+      "Bash(curl -s \"https://backend-production-b36f0.up.railway.app/api/search?q=%E5%8F%AA%E6%9C%89\")",
+      "Bash(npm run *)"
     ]
   }
 }

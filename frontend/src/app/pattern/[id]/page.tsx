@@ -62,7 +62,7 @@ function GenerateWidget({ pattern }: { pattern: Pattern }) {
     setError('');
     try {
       const result = await generateFromPattern(pattern.id, values);
-      setGeneratedText(result.text);
+      setGeneratedText(result.sentence);
     } catch {
       // Fallback: just use the filled template
       setGeneratedText(preview);
@@ -275,19 +275,9 @@ function ExamplesList({ patternId }: { patternId: number }) {
                 style={{ fontFamily: "'Noto Serif SC', serif" }}>
                 {ex.text}
               </p>
-              <div className="flex items-center justify-between mt-2">
-                {ex.source && (
-                  <span className="text-xs text-[var(--color-text-muted)]">来源：{ex.source}</span>
-                )}
-                {ex.likes !== undefined && (
-                  <span className="ml-auto flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
-                      <path d="M7 10v12M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
-                    </svg>
-                    {ex.likes.toLocaleString()}
-                  </span>
-                )}
-              </div>
+              {ex.source && (
+                <p className="text-xs text-[var(--color-text-muted)] mt-2">来源：{ex.source}</p>
+              )}
             </div>
           ))}
         </div>
@@ -384,12 +374,6 @@ export default function PatternDetailPage() {
               {pattern.template}
             </p>
 
-            {pattern.description && (
-              <p className="text-[var(--color-text-muted)] text-sm mb-4 leading-relaxed">
-                {pattern.description}
-              </p>
-            )}
-
             <div className="flex flex-wrap items-center gap-4">
               <TagList tags={pattern.tags} size="md" />
               <div className="flex items-center gap-4 text-sm text-[var(--color-text-muted)] ml-auto">
@@ -483,9 +467,9 @@ export default function PatternDetailPage() {
 // ─── Mock examples ────────────────────────────────────────────────────────────
 
 const MOCK_EXAMPLES: Example[] = [
-  { id: 1, pattern_id: 1, text: '只有努力学习才能取得好成绩', source: 'Bilibili评论区', likes: 2341 },
-  { id: 2, pattern_id: 1, text: '只有先睡着才能梦见涨工资', source: '微博', likes: 1892 },
-  { id: 3, pattern_id: 1, text: '只有躺平才能不被卷死', source: 'Bilibili', likes: 1543 },
-  { id: 4, pattern_id: 1, text: '只有真正经历过才能理解其中的苦', source: '知乎', likes: 987 },
-  { id: 5, pattern_id: 1, text: '只有失去了才知道珍惜', source: '评论区', likes: 756 },
+  { id: 1, pattern_id: 1, text: '只有努力学习才能取得好成绩', source: 'Bilibili' },
+  { id: 2, pattern_id: 1, text: '只有先睡着才能梦见涨工资', source: '微博' },
+  { id: 3, pattern_id: 1, text: '只有躺平才能不被卷死', source: 'Bilibili' },
+  { id: 4, pattern_id: 1, text: '只有真正经历过才能理解其中的苦', source: '知乎' },
+  { id: 5, pattern_id: 1, text: '只有失去了才知道珍惜', source: '评论区' },
 ];
