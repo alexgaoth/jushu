@@ -14,13 +14,15 @@ import argparse
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+CHUNK = 100
 
 
 # ── Date parsing helper ───────────────────────────────────────────────────────
@@ -35,7 +37,6 @@ def _parse_since(value: Optional[str]) -> Optional[datetime]:
         )
     if value == "today":
         return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    # Try ISO date formats
     for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
         try:
             dt = datetime.strptime(value, fmt)
@@ -88,7 +89,6 @@ async def process_text(db: AsyncSession, raw_text) -> int:
         for slot_key, slot_val in slot_fillings.items():
             example_content = example_content.replace(f"{{{slot_key}}}", slot_val)
 
-        # Add example
         example = PatternExample(
             pattern_id=pattern.id,
             raw_text_id=raw_text.id,
@@ -100,7 +100,6 @@ async def process_text(db: AsyncSession, raw_text) -> int:
         # Assign tags
         tag_names = assign_tags(template, example_content)
         for tag_name in tag_names:
-            # Upsert tag
             tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
             tag = tag_result.scalar_one_or_none()
             if tag is None:
@@ -108,15 +107,12 @@ async def process_text(db: AsyncSession, raw_text) -> int:
                 db.add(tag)
                 await db.flush()
 
-            # Upsert pattern-tag link — ON CONFLICT DO NOTHING avoids
-            # duplicate errors when the same tag appears in the same session batch
             await db.execute(
                 pg_insert(PatternTag)
                 .values(pattern_id=pattern.id, tag_id=tag.id)
                 .on_conflict_do_nothing()
             )
 
-    # Mark raw_text as processed
     raw_text.processed = True
     return new_count
 
@@ -126,38 +122,53 @@ async def run_pipeline(since: Optional[datetime] = None) -> None:
     from app.models import RawText
 
     logger.info("Starting NLP pipeline (since=%s)", since)
-    async with AsyncSessionLocal() as db:
-        stmt = select(RawText).where(RawText.processed == False)  # noqa: E712
-        if since is not None:
-            stmt = stmt.where(RawText.created_at >= since)
-        stmt = stmt.order_by(RawText.created_at.asc())
+    total_processed = 0
+    total_new_patterns = 0
 
-        result = await db.execute(stmt)
-        raw_texts = result.scalars().all()
+    while True:
+        # Load one chunk of IDs so no objects are held across sessions
+        async with AsyncSessionLocal() as db:
+            stmt = select(RawText.id).where(RawText.processed == False)  # noqa: E712
+            if since is not None:
+                stmt = stmt.where(RawText.created_at >= since)
+            stmt = stmt.order_by(RawText.created_at.asc()).limit(CHUNK)
+            result = await db.execute(stmt)
+            chunk_ids: List[int] = list(result.scalars().all())
 
-        logger.info("Found %d unprocessed raw text(s).", len(raw_texts))
+        if not chunk_ids:
+            break
 
-        total_processed = 0
-        total_new_patterns = 0
+        logger.info("Processing chunk of %d unprocessed raw text(s).", len(chunk_ids))
 
-        for raw_text in raw_texts:
-            raw_text_id = raw_text.id  # capture before any potential rollback
+        for raw_text_id in chunk_ids:
             try:
-                new_patterns = await process_text(db, raw_text)
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(RawText).where(RawText.id == raw_text_id)
+                    )
+                    raw_text = result.scalar_one()
+                    new_patterns = await process_text(db, raw_text)
+                    await db.commit()
                 total_new_patterns += new_patterns
                 total_processed += 1
-
-                # Commit every 50 records to keep transactions short
-                if total_processed % 50 == 0:
-                    await db.commit()
-                    logger.info("  ... processed %d texts so far", total_processed)
-
             except Exception as exc:
-                logger.error("Error processing raw_text id=%d: %s", raw_text_id, exc)
-                await db.rollback()
-                continue
-
-        await db.commit()
+                logger.error(
+                    "Error processing raw_text id=%d: %s", raw_text_id, exc, exc_info=True
+                )
+                # Quarantine the broken record so it is not retried forever
+                try:
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(RawText).where(RawText.id == raw_text_id)
+                        )
+                        rt = result.scalar_one_or_none()
+                        if rt is not None:
+                            rt.processed = True
+                            await db.commit()
+                except Exception as inner_exc:
+                    logger.error(
+                        "Failed to quarantine raw_text id=%d: %s", raw_text_id, inner_exc
+                    )
 
     logger.info(
         "Pipeline complete: %d texts processed, %d new patterns created.",

@@ -1,8 +1,10 @@
 """Base crawler utilities shared by all platform crawlers."""
 import asyncio
 import hashlib
+import html
 import logging
 import random
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -22,6 +24,37 @@ DEFAULT_HEADERS = {
     "Accept": "application/json",
     "Accept-Language": "zh-CN,zh;q=0.9",
 }
+
+_RE_HTML_TAG = re.compile(r"<[^>]+>")
+_RE_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+_RE_MENTION = re.compile(r"@\S+")
+_RE_EMOJI = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"  # all major emoji blocks in supplementary planes
+    "\U00010000-\U0010FFFF"  # remaining supplementary planes
+    "☀-➿"          # misc symbols, dingbats (U+2600–U+27BF, before CJK at U+4E00)
+    "⌀-⏿"          # misc technical (⌚ ⏏ etc.)
+    "⬀-⯿"          # misc symbols and arrows
+    "←-⇿"          # arrows block
+    "▪-◾"          # geometric shapes subset used as emoji
+    "️"                 # variation selector-16
+    "‍"                 # zero-width joiner
+    "〰"                 # wavy dash
+    "]+",
+    flags=re.UNICODE,
+)
+_RE_WHITESPACE = re.compile(r"[ \t]{2,}")
+
+
+def clean_text(text: str) -> str:
+    """Strip HTML tags, URLs, @mentions, emoji, and excess whitespace."""
+    text = _RE_HTML_TAG.sub("", text)
+    text = html.unescape(text)
+    text = _RE_URL.sub("", text)
+    text = _RE_MENTION.sub("", text)
+    text = _RE_EMOJI.sub("", text)
+    text = _RE_WHITESPACE.sub(" ", text)
+    return text.strip()
 
 
 def sha256_hash(text: str) -> str:
@@ -71,8 +104,11 @@ class BaseCrawler(ABC):
     ) -> bool:
         """
         Insert a raw text record using a short-lived session (no long-held connection).
-        Returns True if inserted, False if duplicate.
+        Returns True if inserted, False if duplicate or empty after cleaning.
         """
+        raw_content = clean_text(raw_content)
+        if len(raw_content) < 2:
+            return False
         content_hash = sha256_hash(raw_content)
 
         async with self.session_factory() as db:

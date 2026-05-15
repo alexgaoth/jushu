@@ -31,7 +31,10 @@
       "Bash(curl -s \"https://backend-production-b36f0.up.railway.app/api/trending\")",
       "Bash(.venv/Scripts/python -m nlp.run_pipeline)",
       "Bash(curl -s \"https://backend-production-b36f0.up.railway.app/api/search?q=%E5%8F%AA%E6%9C%89\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(python3 -c \"from crawlers.base import clean_text; print\\(clean_text\\('如果😀你好@user https://example.com，就<b>学习</b>&amp;努力'\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)"
     ]
   }
 }

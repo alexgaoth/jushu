@@ -3,6 +3,8 @@ Bilibili crawler — fetches comments and danmaku for given BV numbers.
 
 Usage (CLI):
     python -m crawlers.bilibili --bvs BV1xx411c7mD BV2yy222c2mE
+    python -m crawlers.bilibili --trending 20
+    python -m crawlers.bilibili --trending 10 --bvs BV1xx411c7mD
 
 The crawler:
   1. Resolves BV -> AID/CID via the Bilibili video info API.
@@ -10,6 +12,7 @@ The crawler:
   3. Fetches danmaku XML (capped at --max-danmaku entries per video).
   4. Stores all texts in raw_texts with SHA-256 deduplication via short-lived sessions.
   5. Inserts polite 1-2 second random delays between requests.
+  6. Processes up to 3 BVIDs concurrently via asyncio.Semaphore.
 """
 import argparse
 import asyncio
@@ -27,6 +30,9 @@ logger = logging.getLogger(__name__)
 BILIBILI_VIDEO_INFO = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_REPLY_MAIN = "https://api.bilibili.com/x/v2/reply/main"
 BILIBILI_DANMAKU = "https://api.bilibili.com/x/v1/dm/list.so"
+BILIBILI_POPULAR = "https://api.bilibili.com/x/web-interface/popular"
+
+_CONCURRENCY = 3
 
 
 class BilibiliCrawler(BaseCrawler):
@@ -38,16 +44,53 @@ class BilibiliCrawler(BaseCrawler):
     async def crawl(self) -> None:
         raise NotImplementedError("Call crawl_bvids(bvids) directly.")
 
+    async def _fetch_trending_bvids(self, n: int) -> List[str]:
+        """Page through the Bilibili popular API and return up to n BVIDs."""
+        assert self.client is not None, "Client not initialised — use async context manager."
+        bvids: List[str] = []
+        pn = 1
+        page_size = 20
+        while len(bvids) < n:
+            try:
+                data = await self._get_json(BILIBILI_POPULAR, params={"pn": pn, "ps": page_size})
+            except httpx.HTTPError as exc:
+                logger.warning("Popular API page %d failed: %s", pn, exc)
+                break
+            if data.get("code") != 0:
+                logger.warning(
+                    "Popular API error code=%s: %s", data.get("code"), data.get("message")
+                )
+                break
+            items: List[Dict[str, Any]] = (data.get("data") or {}).get("list") or []
+            if not items:
+                break
+            for item in items:
+                bvid = item.get("bvid")
+                if bvid:
+                    bvids.append(bvid)
+                    if len(bvids) >= n:
+                        break
+            if (data.get("data") or {}).get("no_more"):
+                break
+            pn += 1
+            await polite_delay()
+        logger.info("Fetched %d trending BVIDs", len(bvids))
+        return bvids[:n]
+
     async def crawl_bvids(self, bvids: List[str]) -> Dict[str, int]:
-        """Crawl a list of BV numbers. Returns totals per bvid."""
+        """Crawl a list of BV numbers, up to _CONCURRENCY at a time."""
         totals: Dict[str, int] = {}
-        async with self:
-            for bvid in bvids:
+        sem = asyncio.Semaphore(_CONCURRENCY)
+
+        async def _crawl_one(bvid: str) -> None:
+            async with sem:
                 logger.info("Processing %s", bvid)
                 saved = 0
                 try:
                     aid, cid, title = await self._resolve_bvid(bvid)
-                    logger.info("  Resolved %s -> aid=%d cid=%d title=%r", bvid, aid, cid, title)
+                    logger.info(
+                        "  Resolved %s -> aid=%d cid=%d title=%r", bvid, aid, cid, title
+                    )
                     video_url = f"https://www.bilibili.com/video/{bvid}"
                     saved += await self._crawl_comments(aid=aid, source_url=video_url)
                     saved += await self._crawl_danmaku(cid=cid, source_url=video_url)
@@ -57,6 +100,10 @@ class BilibiliCrawler(BaseCrawler):
                     logger.exception("Unexpected error for %s: %s", bvid, exc)
                 totals[bvid] = saved
                 logger.info("  Total saved for %s: %d", bvid, saved)
+
+        async with self:
+            await asyncio.gather(*(_crawl_one(bvid) for bvid in bvids))
+
         return totals
 
     async def _resolve_bvid(self, bvid: str) -> Tuple[int, int, str]:
@@ -96,6 +143,7 @@ class BilibiliCrawler(BaseCrawler):
                 logger.info("  No more comments on page %d", page)
                 break
 
+            page_saved = 0
             for reply in replies:
                 content: str = reply.get("content", {}).get("message", "").strip()
                 if content:
@@ -108,7 +156,7 @@ class BilibiliCrawler(BaseCrawler):
                         source_url=source_url,
                         timestamp=ts,
                     ):
-                        total_saved += 1
+                        page_saved += 1
 
                 for sub in (reply.get("replies") or []):
                     sub_content: str = sub.get("content", {}).get("message", "").strip()
@@ -125,9 +173,10 @@ class BilibiliCrawler(BaseCrawler):
                             source_url=source_url,
                             timestamp=sub_ts,
                         ):
-                            total_saved += 1
+                            page_saved += 1
 
-            logger.info("  Saved %d new texts from comment page %d", total_saved, page)
+            total_saved += page_saved
+            logger.info("  Saved %d new texts from comment page %d", page_saved, page)
             await polite_delay()
 
         return total_saved
@@ -181,11 +230,22 @@ class BilibiliCrawler(BaseCrawler):
 
 async def _main() -> None:
     parser = argparse.ArgumentParser(description="Bilibili crawler for 句式搜索引擎")
-    parser.add_argument("--bvs", nargs="+", required=True, metavar="BVID")
+    parser.add_argument("--bvs", nargs="+", metavar="BVID", default=None,
+                        help="One or more BV numbers to crawl")
+    parser.add_argument(
+        "--trending",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Fetch and crawl the top N trending BVIDs from the Bilibili popular API",
+    )
     parser.add_argument("--max-pages", type=int, default=5)
     parser.add_argument("--max-danmaku", type=int, default=300,
                         help="Max danmaku entries to save per video (default: 300)")
     args = parser.parse_args()
+
+    if not args.bvs and not args.trending:
+        parser.error("Provide --bvs, --trending, or both.")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -199,7 +259,18 @@ async def _main() -> None:
         max_pages=args.max_pages,
         max_danmaku=args.max_danmaku,
     )
-    totals = await crawler.crawl_bvids(args.bvs)
+
+    bvids: List[str] = list(args.bvs or [])
+    if args.trending:
+        async with crawler:
+            trending_bvids = await crawler._fetch_trending_bvids(args.trending)
+        seen = set(bvids)
+        for bvid in trending_bvids:
+            if bvid not in seen:
+                bvids.append(bvid)
+                seen.add(bvid)
+
+    totals = await crawler.crawl_bvids(bvids)
     grand_total = sum(totals.values())
     logger.info("Crawl complete. Total saved: %d", grand_total)
     for bvid, n in totals.items():

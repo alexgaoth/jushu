@@ -36,7 +36,7 @@ class ExtractionResult(NamedTuple):
 # SLOT_RE matches a short Chinese phrase (up to 20 chars, non-greedy).
 #
 
-_SHORT = r"[一-鿿\w，、]{1,20}"  # short Chinese phrase, no period/！？
+_SLOT_INNER = r"[^。！？\n]{1,20}?"  # short phrase, excludes sentence-boundary punctuation
 
 CONNECTIVE_RULES: List[Tuple[str, str, str]] = [
     # (connective_A, connective_B, template_string_with_{slotN})
@@ -82,8 +82,8 @@ def _build_regex(conn_a: str, conn_b: Optional[str]) -> Optional[re.Pattern]:
     if conn_b is None:
         # Fixed idiom — no slots, just presence check
         return re.compile(re.escape(conn_a))
-    slot = r"(?P<slot1>.{1,25}?)"
-    slot2 = r"(?P<slot2>.{1,25}?)"
+    slot = r"(?P<slot1>" + _SLOT_INNER + r")"
+    slot2 = r"(?P<slot2>" + _SLOT_INNER + r")"
     # Pattern: <conn_a> <slot1> [，,]? <conn_b> <slot2>
     pattern = (
         re.escape(conn_a)
@@ -127,7 +127,6 @@ def extract(text: str) -> List[ExtractionResult]:
         A list of ExtractionResult, one per match found.
     """
     results: List[ExtractionResult] = []
-    seen_templates: set = set()
 
     # Split on sentence boundaries first to keep slots short
     sentences = re.split(r"[。！？\n]", text)
@@ -159,12 +158,8 @@ def extract(text: str) -> List[ExtractionResult]:
                 if slot2:
                     slot_fillings["slot2"] = slot2
 
-                # Deduplicate by template
-                if template_str in seen_templates:
-                    continue
-                seen_templates.add(template_str)
-
-                pos_seq = _pos_sequence(template_str)
+                # Tag the actual matched sentence fragment, not the template literal
+                pos_seq = _pos_sequence(match.group(0))
 
                 results.append(
                     ExtractionResult(
