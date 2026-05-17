@@ -289,8 +289,8 @@ export default function MuseumPage() {
               神评<span className="text-indigo-400">博物馆</span>
             </h1>
             <p className="text-zinc-400 text-lg leading-relaxed">
-              收录网络最经典的固定句式模板。每一句都是时代的切片，
-              每一个槽位都是集体记忆的留白。
+              收录那些一换槽位就能把人带回原始场面的网络句式。
+              每一句都是被反复借用的记忆框架。
             </p>
 
             {/* Range selector */}
@@ -346,13 +346,13 @@ export default function MuseumPage() {
         {!isLoading && patterns.length > 0 && (
           <div className="mt-16 text-center animate-fade-up" style={{ animationDelay: '0.5s' }}>
             <p className="text-[var(--color-text-muted)] text-sm mb-4">
-              探索更多句式，发现语言的无限可能
+              探索更多 JuShi，查看它们如何在不同场景中被借用
             </p>
             <Link
               href="/browse"
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-500 text-white font-semibold hover:bg-indigo-600 transition-colors"
             >
-              浏览全部句式
+              浏览全部 JuShi
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
                 <path d="M5 12h14M12 5l7 7-7 7" />
               </svg>

@@ -169,11 +169,11 @@ export default function BrowsePage() {
           <div className="w-1 h-7 bg-indigo-500 rounded-full" />
           <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)]"
             style={{ fontFamily: "'Noto Serif SC', serif" }}>
-            发现句式
+            发现 JuShi
           </h1>
         </div>
         <p className="text-[var(--color-text-muted)] ml-4 pl-3">
-          浏览收录的 <span className="text-indigo-500 font-medium">{total.toLocaleString()}</span> 个中文网络固定句式
+          浏览收录的 <span className="text-indigo-500 font-medium">{total.toLocaleString()}</span> 个会触发原始记忆的中文网络句式
         </p>
       </div>
 

@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="句式搜索引擎 API",
-    description="Chinese Internet Fixed Expression Search Engine",
+    title="JuShi API",
+    description="API for indexing and searching Chinese intertextual sentence frames",
     version="0.1.0",
     lifespan=lifespan,
 )

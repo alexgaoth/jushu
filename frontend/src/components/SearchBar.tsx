@@ -16,7 +16,7 @@ export function SearchBar({
   value,
   onChange,
   onSearch,
-  placeholder = '搜索句式，例如：只有*才*',
+  placeholder = '搜索 JuShi，例如：感谢*让我*',
   size = 'lg',
   autoFocus = false,
   className = '',

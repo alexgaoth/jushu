@@ -109,11 +109,11 @@ interface ApiExamplesResponse {
   total: number;
   page: number;
   size: number;
-  examples: Array<{ id: number; pattern_id: number; content: string; slot_fillings: Record<string, string> | null }>;
+  results: Array<{ id: number; content: string; slot_fillings: Record<string, string> | null }>;
 }
 
 interface ApiGenerateResponse {
-  sentence: string;
+  result: string;
 }
 
 // ─── Normalisers ─────────────────────────────────────────────────────────────
@@ -208,16 +208,17 @@ export async function generateFromPattern(
   const params: Record<string, string> = {};
   Object.entries(slots).forEach(([k, v]) => { params[k] = v; });
   const raw = await get<ApiGenerateResponse>(`/api/patterns/${id}/generate`, params);
-  return { sentence: raw.sentence };
+  return { sentence: raw.result };
 }
 
 export async function getExamples(patternId: number, page = 1, sort = 'hot'): Promise<ExamplesResult> {
-  const raw = await get<ApiExamplesResponse>('/api/examples', { pattern_id: patternId, page, sort });
+  const apiSort = sort === 'newest' ? 'new' : 'hot';
+  const raw = await get<ApiExamplesResponse>('/api/examples', { pattern_id: patternId, page, sort: apiSort });
   return {
     total: raw.total,
     page: raw.page,
     size: raw.size,
-    items: (raw.examples || []).map((e) => ({
+    items: (raw.results || []).map((e) => ({
       id: e.id,
       pattern_id: patternId,
       text: e.content,
@@ -225,8 +226,8 @@ export async function getExamples(patternId: number, page = 1, sort = 'hot'): Pr
   };
 }
 
-export async function browsePatterns(page = 1, size = 24, tag?: string, sort = 'hot'): Promise<BrowseResult> {
-  const raw = await get<ApiSearchResponse>('/api/search', { q: tag || '', page, size });
+export async function browsePatterns(page = 1, size = 24, tag?: string, sort = 'usage'): Promise<BrowseResult> {
+  const raw = await get<ApiSearchResponse>('/api/search', { q: '*', tag, sort, page, size });
   const results = raw.results || [];
   const pages = raw.total > 0 ? Math.ceil(raw.total / (raw.size || size)) : 1;
   return {

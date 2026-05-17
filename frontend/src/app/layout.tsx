@@ -3,12 +3,12 @@ import Link from 'next/link';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '句式 · Jushu — 中文固定句式搜索引擎',
-  description: '搜索、发现和创作中文网络固定句式。收录Bilibili等平台流行的神评模板。',
-  keywords: '句式,固定句式,Bilibili,神评,中文梗,句式搜索',
+  title: '句式 · JuShi — 中文网络句式档案',
+  description: '搜索、发现和追溯中文网络 JuShi：那些替换槽位后仍让人想起原始名场面的句式。',
+  keywords: '句式,JuShi,中文梗,神评,名场面,句式搜索',
   openGraph: {
-    title: '句式 · Jushu',
-    description: '中文网络固定句式搜索引擎',
+    title: '句式 · JuShi',
+    description: '中文网络 JuShi 档案',
     type: 'website',
   },
 };
@@ -29,7 +29,7 @@ function Header() {
               句式
             </span>
             <span className="text-[10px] text-[var(--color-text-muted)] tracking-widest uppercase">
-              Jushu
+              JuShi
             </span>
           </div>
         </Link>
@@ -72,8 +72,8 @@ function Footer() {
               <span className="text-indigo-400 text-sm" style={{ fontFamily: "'Noto Serif SC', serif" }}>句</span>
             </div>
             <div>
-              <p className="text-sm font-medium text-[var(--color-text)]">句式搜索引擎</p>
-              <p className="text-xs text-[var(--color-text-muted)]">收录中文网络固定句式</p>
+              <p className="text-sm font-medium text-[var(--color-text)]">JuShi 句式档案</p>
+              <p className="text-xs text-[var(--color-text-muted)]">收录会被反复借用的中文网络句式</p>
             </div>
           </div>
 
@@ -84,7 +84,7 @@ function Footer() {
           </div>
 
           <p className="text-xs text-[var(--color-text-muted)]">
-            © 2024 句式 · 收集网络语言之美
+            © 2026 句式 · 收集被反复借用的网络记忆
           </p>
         </div>
 

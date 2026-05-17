@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, or_, text
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -64,7 +64,9 @@ async def _log_search(db: AsyncSession, query: str, result_count: int) -> None:
 
 @router.get("/search", response_model=SearchResponse)
 async def search_patterns(
-    q: str = Query(..., min_length=1, description="Search query, supports * wildcard"),
+    q: str = Query("", min_length=0, description="Search query, supports * wildcard"),
+    tag: Optional[str] = Query(None, description="Filter by exact tag name"),
+    sort: str = Query("usage", pattern="^(usage|newest|examples)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -75,42 +77,68 @@ async def search_patterns(
     Falls back to PostgreSQL full-text search when no wildcard is present.
     """
     offset = (page - 1) * size
-    sql_pattern = _wildcard_to_sql(q)
-    has_wildcard = "%" in sql_pattern
+    filters = []
 
-    if has_wildcard:
-        # ILIKE with SQL wildcard
-        where_clause = SentencePattern.template_text.ilike(sql_pattern, escape="\\")
-    else:
-        # Full-text search via to_tsquery (Chinese requires prefix matching with pg_trgm)
-        # Use ILIKE with surrounding wildcards as fallback-compatible approach
-        where_clause = or_(
-            SentencePattern.template_text.ilike(f"%{q}%"),
-            # Also match examples content
-            SentencePattern.id.in_(
-                select(PatternExample.pattern_id).where(
-                    PatternExample.content.ilike(f"%{q}%")
+    if q.strip():
+        sql_pattern = _wildcard_to_sql(q)
+        has_wildcard = "%" in sql_pattern
+
+        if has_wildcard:
+            filters.append(
+                SentencePattern.template_text.ilike(sql_pattern, escape="\\")
+            )
+        else:
+            filters.append(
+                or_(
+                    SentencePattern.template_text.ilike(f"%{q}%"),
+                    SentencePattern.id.in_(
+                        select(PatternExample.pattern_id).where(
+                            PatternExample.content.ilike(f"%{q}%")
+                        )
+                    ),
                 )
-            ),
+            )
+
+    if tag:
+        filters.append(
+            SentencePattern.pattern_tags.any(
+                PatternTag.tag.has(Tag.name == tag)
+            )
         )
 
+    example_count_subquery = (
+        select(func.count(PatternExample.id))
+        .where(PatternExample.pattern_id == SentencePattern.id)
+        .correlate(SentencePattern)
+        .scalar_subquery()
+    )
+    order_by_map = {
+        "usage": SentencePattern.source_count.desc(),
+        "newest": SentencePattern.created_at.desc(),
+        "examples": example_count_subquery.desc(),
+    }
+    order_by_clause = order_by_map[sort]
+
     # Count query
-    count_stmt = select(func.count()).select_from(SentencePattern).where(where_clause)
+    count_stmt = select(func.count()).select_from(SentencePattern)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total_result = await db.execute(count_stmt)
     total = total_result.scalar_one()
 
     # Main query with eager loading
     stmt = (
         select(SentencePattern)
-        .where(where_clause)
         .options(
             selectinload(SentencePattern.pattern_tags).selectinload(PatternTag.tag),
             selectinload(SentencePattern.examples),
         )
-        .order_by(SentencePattern.source_count.desc())
+        .order_by(order_by_clause)
         .offset(offset)
         .limit(size)
     )
+    if filters:
+        stmt = stmt.where(*filters)
     result = await db.execute(stmt)
     patterns = result.scalars().all()
 

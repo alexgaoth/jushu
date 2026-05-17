@@ -38,11 +38,11 @@ function HeroBackground() {
 function TrendingSection({ patterns }: { patterns: Pattern[] }) {
   return (
     <div className="animate-fade-up" style={{ animationDelay: '0.2s' }}>
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-1 h-5 bg-indigo-500 rounded-full" />
-        <h2 className="text-sm font-semibold text-[var(--color-text-muted)] uppercase tracking-widest">
-          本周热门句式
-        </h2>
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-1 h-5 bg-indigo-500 rounded-full" />
+          <h2 className="text-sm font-semibold text-[var(--color-text-muted)] uppercase tracking-widest">
+          本周高频 JuShi
+          </h2>
         <div className="flex-1 h-px bg-[var(--color-border)]" />
         <span className="text-xs text-indigo-400 font-mono">热</span>
       </div>
@@ -63,12 +63,12 @@ function TrendingSection({ patterns }: { patterns: Pattern[] }) {
 
 function ExampleQueries() {
   const examples = [
-    '只有*才*',
-    '不是*而是*',
-    '我选择*',
-    '什么是*',
-    '*的*是*',
-    '如果*那*',
+    '感谢*让我*',
+    '*，懂的都懂',
+    '不愧是*，*',
+    '没想到*居然*',
+    '原来*，怪不得*',
+    '*的翻版',
   ];
 
   return (
@@ -297,10 +297,11 @@ export default function HomePage() {
           <div className="mb-8 animate-fade-up">
             <h1 className="text-3xl sm:text-5xl font-bold mb-3 text-[var(--color-text)]"
               style={{ fontFamily: "'Noto Serif SC', serif", letterSpacing: '0.05em' }}>
-              句式搜索引擎
+              JuShi 句式档案
             </h1>
             <p className="text-[var(--color-text-muted)] text-base sm:text-lg">
-              收录中文网络<span className="text-indigo-500 font-medium">固定句式</span>，探索语言的模式与创意
+              收录那些替换人物、地点或动作后，
+              仍会让人想起<span className="text-indigo-500 font-medium">原始名场面</span>的中文网络句式
             </p>
           </div>
 
@@ -320,9 +321,9 @@ export default function HomePage() {
           {/* Stats bar */}
           <div className="mt-8 flex items-center justify-center gap-8 animate-fade-up" style={{ animationDelay: '0.3s' }}>
             {[
-              { label: '句式收录', value: '10,000+' },
-              { label: '例句样本', value: '50万+' },
-              { label: '标签分类', value: '200+' },
+              { label: '句式条目', value: '10,000+' },
+              { label: '复用例句', value: '50万+' },
+              { label: '语义标签', value: '200+' },
             ].map(({ label, value }) => (
               <div key={label} className="text-center">
                 <div className="text-xl font-bold text-indigo-500" style={{ fontFamily: "'Noto Serif SC', serif" }}>
