@@ -4,7 +4,7 @@ Tag assignment for sentence patterns.
 Uses keyword-based matching to categorise patterns into domains,
 sentiment registers, and style buckets.
 """
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 # ── Keyword dictionaries ──────────────────────────────────────────────────────
 #
@@ -56,7 +56,21 @@ TAG_DEFINITIONS: Dict[str, Tuple[str, List[str]]] = {
     # ── Sentiment ─────────────────────────────────────────────────────────────
     "阴阳怪气": (
         "sentiment",
-        ["阴阳", "讽刺", "挖苦", "嘲讽", "反话", "哦对", "真的假的", "哈哈哈哈", "好家伙"],
+        [
+            "不愧",
+            "原来如此",
+            "怪不得",
+            "没想到",
+            "居然",
+            "看来",
+            "果然",
+            "总算",
+            "所谓",
+            "这就是",
+            "真是",
+            "感谢",
+            "幸亏",
+        ],
     ),
     "正能量": (
         "sentiment",
@@ -82,6 +96,22 @@ TAG_DEFINITIONS: Dict[str, Tuple[str, List[str]]] = {
     "成语化": (
         "style",
         ["之道", "之法", "之术", "主义", "有余", "不足", "无以"],
+    ),
+    "借古讽今": (
+        "style",
+        ["想起了", "当年", "历史", "重演", "翻版", "那时候", "那一年", "不是第一次"],
+    ),
+    "反向感谢": (
+        "style",
+        ["感谢", "多亏了", "要不是", "托了", "幸亏"],
+    ),
+    "梗引用": (
+        "style",
+        ["懂的都懂", "不愧是", "属于是", "细思极恐", "就这还", "这波", "绷不住"],
+    ),
+    "反问讽刺": (
+        "style",
+        ["难道", "凭什么", "居然", "竟然", "有没有", "自觉"],
     ),
     "排比句": (
         "style",

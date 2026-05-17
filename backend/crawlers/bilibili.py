@@ -4,10 +4,12 @@ Bilibili crawler — fetches comments and danmaku for given BV numbers.
 Usage (CLI):
     python -m crawlers.bilibili --bvs BV1xx411c7mD BV2yy222c2mE
     python -m crawlers.bilibili --trending 20
+    python -m crawlers.bilibili --keywords 社会热点 时事吐槽 评论区
     python -m crawlers.bilibili --trending 10 --bvs BV1xx411c7mD
 
 The crawler:
   1. Resolves BV -> AID/CID via the Bilibili video info API.
+  2. Can discover BVIDs from search keywords that target reaction/meme content.
   2. Fetches paginated comments from the reply API (requires no auth for public videos).
   3. Fetches danmaku XML (capped at --max-danmaku entries per video).
   4. Stores all texts in raw_texts with SHA-256 deduplication via short-lived sessions.
@@ -19,7 +21,7 @@ import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 
@@ -31,8 +33,24 @@ BILIBILI_VIDEO_INFO = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_REPLY_MAIN = "https://api.bilibili.com/x/v2/reply/main"
 BILIBILI_DANMAKU = "https://api.bilibili.com/x/v1/dm/list.so"
 BILIBILI_POPULAR = "https://api.bilibili.com/x/web-interface/popular"
+BILIBILI_SEARCH_ALL = "https://api.bilibili.com/x/web-interface/search/all"
 
 _CONCURRENCY = 3
+DEFAULT_SEARCH_KEYWORDS = [
+    "社会热点",
+    "网络热梗",
+    "时事吐槽",
+    "历史对比",
+    "这让我想起",
+    "感谢让我",
+    "评论区",
+    "以史为鉴",
+    "鬼畜",
+    "沙雕时政",
+    "懂的都懂",
+    "细思极恐",
+    "属于是",
+]
 
 
 class BilibiliCrawler(BaseCrawler):
@@ -77,8 +95,101 @@ class BilibiliCrawler(BaseCrawler):
         logger.info("Fetched %d trending BVIDs", len(bvids))
         return bvids[:n]
 
+    async def _search_bvids(self, keyword: str, n: int) -> List[str]:
+        """Search reaction-oriented keywords and return up to n unique BVIDs."""
+        if n <= 0:
+            return []
+
+        assert self.client is not None, "Client not initialised — use async context manager."
+        bvids: List[str] = []
+        seen: Set[str] = set()
+        pn = 1
+        page_size = min(20, max(1, n))
+
+        while len(bvids) < n:
+            try:
+                data = await self._get_json(
+                    BILIBILI_SEARCH_ALL,
+                    params={
+                        "search_type": "video",
+                        "keyword": keyword,
+                        "ps": page_size,
+                        "pn": pn,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.warning("Search API failed for keyword %r page %d: %s", keyword, pn, exc)
+                break
+
+            if data.get("code") != 0:
+                logger.warning(
+                    "Search API error for keyword %r: code=%s message=%s",
+                    keyword,
+                    data.get("code"),
+                    data.get("message"),
+                )
+                break
+
+            items = self._extract_search_video_items(data)
+            if not items:
+                break
+
+            added = 0
+            for item in items:
+                bvid = item.get("bvid")
+                if not bvid or bvid in seen:
+                    continue
+                seen.add(bvid)
+                bvids.append(bvid)
+                added += 1
+                if len(bvids) >= n:
+                    break
+
+            paging = (data.get("data") or {}).get("page") or {}
+            total_pages = paging.get("numPages") or paging.get("pages")
+            if len(items) < page_size or (isinstance(total_pages, int) and pn >= total_pages):
+                break
+            if added == 0:
+                break
+
+            pn += 1
+            await polite_delay()
+
+        logger.info("Keyword %r yielded %d BVID(s)", keyword, len(bvids))
+        return bvids[:n]
+
+    def _extract_search_video_items(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        payload = data.get("data") or {}
+        result_blob = payload.get("result")
+
+        if isinstance(result_blob, list):
+            for block in result_blob:
+                if block.get("result_type") != "video":
+                    continue
+                items = block.get("data") or block.get("result") or []
+                return [item for item in items if isinstance(item, dict)]
+
+        if isinstance(result_blob, dict):
+            video_block = result_blob.get("video") or {}
+            if isinstance(video_block, dict):
+                items = video_block.get("result") or video_block.get("data") or []
+                return [item for item in items if isinstance(item, dict)]
+            if isinstance(video_block, list):
+                return [item for item in video_block if isinstance(item, dict)]
+
+        return []
+
     async def crawl_bvids(self, bvids: List[str]) -> Dict[str, int]:
         """Crawl a list of BV numbers, up to _CONCURRENCY at a time."""
+        unique_bvids: List[str] = []
+        seen_bvids: Set[str] = set()
+        for bvid in bvids:
+            cleaned = bvid.strip()
+            if not cleaned or cleaned in seen_bvids:
+                continue
+            seen_bvids.add(cleaned)
+            unique_bvids.append(cleaned)
+
         totals: Dict[str, int] = {}
         sem = asyncio.Semaphore(_CONCURRENCY)
 
@@ -102,7 +213,7 @@ class BilibiliCrawler(BaseCrawler):
                 logger.info("  Total saved for %s: %d", bvid, saved)
 
         async with self:
-            await asyncio.gather(*(_crawl_one(bvid) for bvid in bvids))
+            await asyncio.gather(*(_crawl_one(bvid) for bvid in unique_bvids))
 
         return totals
 
@@ -239,13 +350,30 @@ async def _main() -> None:
         default=None,
         help="Fetch and crawl the top N trending BVIDs from the Bilibili popular API",
     )
+    parser.add_argument(
+        "--keywords",
+        nargs="*",
+        metavar="KW",
+        default=None,
+        help=(
+            "Search reaction/meme-oriented keywords and crawl matching videos. "
+            "Pass no values to use the built-in seed list."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-results",
+        type=int,
+        metavar="N",
+        default=10,
+        help="Maximum number of BVIDs to take per keyword search (default: 10)",
+    )
     parser.add_argument("--max-pages", type=int, default=5)
     parser.add_argument("--max-danmaku", type=int, default=300,
                         help="Max danmaku entries to save per video (default: 300)")
     args = parser.parse_args()
 
-    if not args.bvs and not args.trending:
-        parser.error("Provide --bvs, --trending, or both.")
+    if not args.bvs and not args.trending and args.keywords is None:
+        parser.error("Provide --bvs, --trending, --keywords, or a combination.")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -261,14 +389,25 @@ async def _main() -> None:
     )
 
     bvids: List[str] = list(args.bvs or [])
+    seen = set(bvids)
     if args.trending:
         async with crawler:
             trending_bvids = await crawler._fetch_trending_bvids(args.trending)
-        seen = set(bvids)
         for bvid in trending_bvids:
             if bvid not in seen:
                 bvids.append(bvid)
                 seen.add(bvid)
+
+    if args.keywords is not None:
+        keywords = args.keywords or DEFAULT_SEARCH_KEYWORDS
+        async with crawler:
+            for keyword in keywords:
+                keyword_bvids = await crawler._search_bvids(keyword, args.keyword_results)
+                for bvid in keyword_bvids:
+                    if bvid in seen:
+                        continue
+                    bvids.append(bvid)
+                    seen.add(bvid)
 
     totals = await crawler.crawl_bvids(bvids)
     grand_total = sum(totals.values())

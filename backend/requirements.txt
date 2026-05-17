@@ -10,3 +10,4 @@ jieba==0.42.1
 python-dotenv==1.0.1
 psycopg2-binary==2.9.9
 pgvector==0.2.5
+apscheduler==3.10.4

@@ -3,7 +3,6 @@ from typing import Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    Column,
     DateTime,
     ForeignKey,
     Index,
@@ -13,7 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.database import Base
 
@@ -58,6 +57,12 @@ class SentencePattern(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     template_text: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    canonical_template_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("sentence_patterns.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Canonical parent template for subvariants",
+    )
     pos_sequence: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True, comment="POS tag sequence, space-separated"
     )
@@ -78,11 +83,23 @@ class SentencePattern(Base):
     examples: Mapped[list["PatternExample"]] = relationship(
         "PatternExample", back_populates="pattern", cascade="all, delete-orphan"
     )
+    canonical_template: Mapped[Optional["SentencePattern"]] = relationship(
+        "SentencePattern",
+        remote_side="SentencePattern.id",
+        back_populates="variants",
+        foreign_keys=[canonical_template_id],
+    )
+    variants: Mapped[list["SentencePattern"]] = relationship(
+        "SentencePattern",
+        back_populates="canonical_template",
+        foreign_keys=[canonical_template_id],
+    )
     pattern_tags: Mapped[list["PatternTag"]] = relationship(
         "PatternTag", back_populates="pattern", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
+        Index("ix_sentence_patterns_canonical_template_id", "canonical_template_id"),
         Index("ix_sentence_patterns_source_count", "source_count"),
         # GIN index for full-text search will be added in migration
     )
@@ -117,6 +134,7 @@ class PatternExample(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("pattern_id", "content", name="uq_pattern_example_content"),
         Index("ix_pattern_examples_pattern_id", "pattern_id"),
         Index("ix_pattern_examples_raw_text_id", "raw_text_id"),
     )

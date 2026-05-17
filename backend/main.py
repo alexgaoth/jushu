@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine
 from app.api import search, patterns, tags, admin
+from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +26,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     logger.info("Database connection pool ready.")
+    start_scheduler()
     yield
+    stop_scheduler()
     logger.info("Shutting down — disposing database connection pool.")
     await engine.dispose()
     logger.info("Database connection pool disposed.")

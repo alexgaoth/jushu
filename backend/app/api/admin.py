@@ -1,13 +1,13 @@
-import asyncio
 import logging
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from typing import Optional
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import RawText, SentencePattern, PatternExample
+from app.scheduler import get_scheduler_status, run_scheduled_bilibili_crawl, run_scheduled_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,6 +33,14 @@ class StatsResponse(BaseModel):
     unprocessed_texts: int
 
 
+class SchedulerStatusResponse(BaseModel):
+    enabled: bool
+    running: bool
+    timezone: str
+    jobs: list[dict]
+    bilibili_keywords: list[str]
+
+
 # ── Background task ───────────────────────────────────────────────────────────
 
 async def _run_bilibili_crawl(bvids: list[str], max_pages: int) -> None:
@@ -41,13 +49,25 @@ async def _run_bilibili_crawl(bvids: list[str], max_pages: int) -> None:
         from crawlers.bilibili import BilibiliCrawler
         from app.database import AsyncSessionLocal
 
-        async with AsyncSessionLocal() as db:
-            crawler = BilibiliCrawler(db=db, max_pages=max_pages)
-            await crawler.crawl_bvids(bvids)
-            await db.commit()
+        crawler = BilibiliCrawler(session_factory=AsyncSessionLocal, max_pages=max_pages)
+        await crawler.crawl_bvids(bvids)
         logger.info("Bilibili crawl completed for bvids: %s", bvids)
     except Exception as exc:
         logger.exception("Bilibili crawl failed: %s", exc)
+
+
+async def _run_scheduled_crawl_now() -> None:
+    try:
+        await run_scheduled_bilibili_crawl()
+    except Exception as exc:
+        logger.exception("Scheduled crawl-now run failed: %s", exc)
+
+
+async def _run_scheduled_pipeline_now() -> None:
+    try:
+        await run_scheduled_pipeline()
+    except Exception as exc:
+        logger.exception("Scheduled pipeline-now run failed: %s", exc)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -56,7 +76,6 @@ async def _run_bilibili_crawl(bvids: list[str], max_pages: int) -> None:
 async def trigger_crawl(
     payload: CrawlRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
 ) -> CrawlResponse:
     """
     Enqueue a Bilibili crawl job as a FastAPI background task.
@@ -94,4 +113,27 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> StatsResponse:
         patterns=pattern_count,
         examples=example_count,
         unprocessed_texts=unprocessed_count,
+    )
+
+
+@router.get("/admin/scheduler", response_model=SchedulerStatusResponse)
+async def scheduler_status() -> SchedulerStatusResponse:
+    return SchedulerStatusResponse(**get_scheduler_status())
+
+
+@router.post("/admin/scheduler/crawl-now", response_model=CrawlResponse)
+async def run_scheduler_crawl_now(background_tasks: BackgroundTasks) -> CrawlResponse:
+    background_tasks.add_task(_run_scheduled_crawl_now)
+    return CrawlResponse(
+        status="accepted",
+        message="Scheduled keyword crawl triggered in background.",
+    )
+
+
+@router.post("/admin/scheduler/pipeline-now", response_model=CrawlResponse)
+async def run_scheduler_pipeline_now(background_tasks: BackgroundTasks) -> CrawlResponse:
+    background_tasks.add_task(_run_scheduled_pipeline_now)
+    return CrawlResponse(
+        status="accepted",
+        message="Scheduled NLP pipeline triggered in background.",
     )

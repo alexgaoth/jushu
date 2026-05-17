@@ -33,12 +33,12 @@ class ExtractionResult(NamedTuple):
 #   (connective_pair, template_pattern)
 #
 # The regex uses named groups (?P<slot1>...) / (?P<slot2>...) to capture slots.
-# SLOT_RE matches a short Chinese phrase (up to 20 chars, non-greedy).
+# Slot-bearing templates can have one slot or two slots.
 #
 
 _SLOT_INNER = r"[^。！？\n]{1,20}?"  # short phrase, excludes sentence-boundary punctuation
 
-CONNECTIVE_RULES: List[Tuple[str, str, str]] = [
+CONNECTIVE_RULES: List[Tuple[str, Optional[str], str]] = [
     # (connective_A, connective_B, template_string_with_{slotN})
     ("只有", "才", "只有{slot1}，才{slot2}"),
     ("只有", "才能", "只有{slot1}，才能{slot2}"),
@@ -70,6 +70,18 @@ CONNECTIVE_RULES: List[Tuple[str, str, str]] = [
     ("既", "又", "既{slot1}又{slot2}"),
     ("一边", "一边", "一边{slot1}一边{slot2}"),
     ("先", "再", "先{slot1}再{slot2}"),
+    ("感谢", "让我", "感谢{slot1}让我{slot2}"),
+    ("多亏了", "才", "多亏了{slot1}才{slot2}"),
+    ("不愧是", "", "不愧是{slot1}，{slot2}"),
+    ("原来", "怪不得", "原来{slot1}，怪不得{slot2}"),
+    ("没想到", "居然", "没想到{slot1}居然{slot2}"),
+    ("这让我想起了", None, "这让我想起了{slot1}"),
+    ("", None, "{slot1}的翻版"),
+    ("", None, "{slot1}，懂的都懂"),
+    ("", "有没有", "{slot1}有没有{slot2}的自觉"),
+    ("就这还", None, "就这还{slot1}"),
+    ("", "叫做", "{slot1}叫做{slot2}"),
+    ("一方面", "另一方面", "一方面{slot1}，另一方面{slot2}"),
     ("宁缺毋滥", None, "宁缺毋滥"),      # fixed, no slots
     ("得不偿失", None, "得不偿失"),
     ("此消彼长", None, "此消彼长"),
@@ -77,22 +89,44 @@ CONNECTIVE_RULES: List[Tuple[str, str, str]] = [
 
 # ── Pre-compiled regex patterns ───────────────────────────────────────────────
 
-def _build_regex(conn_a: str, conn_b: Optional[str]) -> Optional[re.Pattern]:
-    """Build a compiled regex that captures the two slot spans."""
-    if conn_b is None:
-        # Fixed idiom — no slots, just presence check
-        return re.compile(re.escape(conn_a))
-    slot = r"(?P<slot1>" + _SLOT_INNER + r")"
+def _template_to_regex(template: str) -> str:
+    slot1 = r"(?P<slot1>" + _SLOT_INNER + r")"
     slot2 = r"(?P<slot2>" + _SLOT_INNER + r")"
-    # Pattern: <conn_a> <slot1> [，,]? <conn_b> <slot2>
-    pattern = (
-        re.escape(conn_a)
-        + slot
-        + r"[，,]?\s*"
-        + re.escape(conn_b)
-        + slot2
-        + r"(?=[。！？\s]|$)"
-    )
+    parts: List[str] = []
+    i = 0
+
+    while i < len(template):
+        if template.startswith("{slot1}", i):
+            parts.append(slot1)
+            i += len("{slot1}")
+            continue
+        if template.startswith("{slot2}", i):
+            parts.append(slot2)
+            i += len("{slot2}")
+            continue
+
+        char = template[i]
+        if char in {"，", ","}:
+            parts.append(r"[，,]?\s*")
+        elif char.isspace():
+            parts.append(r"\s*")
+        else:
+            parts.append(re.escape(char))
+        i += 1
+
+    return "".join(parts)
+
+
+def _build_regex(conn_a: str, conn_b: Optional[str], template: str) -> Optional[re.Pattern]:
+    """Build a compiled regex for fixed, one-slot, or two-slot templates."""
+    if "{slot1}" not in template and "{slot2}" not in template:
+        return re.compile(_template_to_regex(template))
+
+    if conn_b is None and "{slot1}" in template and "{slot2}" not in template:
+        pattern = _template_to_regex(template) + r"(?=[。！？\s]|$)"
+    else:
+        pattern = _template_to_regex(template) + r"(?=[。！？\s]|$)"
+
     try:
         return re.compile(pattern)
     except re.error:
@@ -101,7 +135,7 @@ def _build_regex(conn_a: str, conn_b: Optional[str]) -> Optional[re.Pattern]:
 
 _COMPILED_RULES: List[Tuple[Optional[re.Pattern], str]] = []
 for _conn_a, _conn_b, _template in CONNECTIVE_RULES:
-    _regex = _build_regex(_conn_a, _conn_b)
+    _regex = _build_regex(_conn_a, _conn_b, _template)
     if _regex is not None:
         _COMPILED_RULES.append((_regex, _template))
 

@@ -12,17 +12,19 @@ boolean flag, so it is safe to re-run without creating duplicate records.
 """
 import argparse
 import asyncio
+from difflib import SequenceMatcher
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 CHUNK = 100
+SUBVARIANT_DISTANCE_THRESHOLD = 3
 
 
 # ── Date parsing helper ───────────────────────────────────────────────────────
@@ -48,6 +50,89 @@ def _parse_since(value: Optional[str]) -> Optional[datetime]:
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 
+def _levenshtein_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+
+    if len(a) < len(b):
+        a, b = b, a
+
+    previous = list(range(len(b) + 1))
+    for i, char_a in enumerate(a, start=1):
+        current = [i]
+        for j, char_b in enumerate(b, start=1):
+            insert_cost = current[j - 1] + 1
+            delete_cost = previous[j] + 1
+            replace_cost = previous[j - 1] + (char_a != char_b)
+            current.append(min(insert_cost, delete_cost, replace_cost))
+        previous = current
+    return previous[-1]
+
+
+async def _find_canonical_template_id(
+    db: AsyncSession,
+    template: str,
+    pattern_id: int,
+) -> Optional[int]:
+    from app.models import SentencePattern
+
+    candidates_stmt = (
+        select(
+            SentencePattern.id,
+            SentencePattern.template_text,
+        )
+        .where(SentencePattern.canonical_template_id.is_(None))
+        .where(SentencePattern.id != pattern_id)
+        .order_by(SentencePattern.created_at.asc(), SentencePattern.id.asc())
+    )
+    result = await db.execute(candidates_stmt)
+    candidates: Sequence[tuple[int, str]] = result.all()
+
+    best_id: Optional[int] = None
+    best_distance: Optional[int] = None
+
+    for candidate_id, candidate_template in candidates:
+        length_delta = abs(len(template) - len(candidate_template))
+        if length_delta > SUBVARIANT_DISTANCE_THRESHOLD:
+            continue
+
+        # SequenceMatcher is a cheap prefilter before exact edit distance.
+        similarity = SequenceMatcher(None, template, candidate_template).ratio()
+        if similarity < 0.7:
+            continue
+
+        distance = _levenshtein_distance(template, candidate_template)
+        if distance > SUBVARIANT_DISTANCE_THRESHOLD:
+            continue
+
+        if best_distance is None or distance < best_distance:
+            best_id = candidate_id
+            best_distance = distance
+
+    return best_id
+
+
+async def _get_or_create_tag(db: AsyncSession, tag_name: str, category: str):
+    from app.models import Tag
+
+    tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
+    tag = tag_result.scalar_one_or_none()
+    if tag is not None:
+        return tag
+
+    await db.execute(
+        pg_insert(Tag)
+        .values(name=tag_name, category=category)
+        .on_conflict_do_nothing(index_elements=[Tag.name])
+    )
+    tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
+    return tag_result.scalar_one()
+
+
 async def process_text(db: AsyncSession, raw_text) -> int:
     """
     Extract patterns from one RawText record and persist results.
@@ -55,7 +140,7 @@ async def process_text(db: AsyncSession, raw_text) -> int:
     """
     from nlp.extractor import extract
     from nlp.tagger import assign_tags, get_tag_category
-    from app.models import SentencePattern, PatternExample, Tag, PatternTag
+    from app.models import SentencePattern, PatternExample, PatternTag
 
     extractions = extract(raw_text.raw_content)
     new_count = 0
@@ -79,33 +164,40 @@ async def process_text(db: AsyncSession, raw_text) -> int:
             )
             db.add(pattern)
             await db.flush()  # populate pattern.id
+
+            canonical_template_id = await _find_canonical_template_id(db, template, pattern.id)
+            if canonical_template_id is not None:
+                pattern.canonical_template_id = canonical_template_id
+
             new_count += 1
             logger.debug("New pattern: %r", template)
         else:
-            pattern.source_count += 1
+            await db.execute(
+                update(SentencePattern)
+                .where(SentencePattern.id == pattern.id)
+                .values(source_count=SentencePattern.source_count + 1)
+            )
 
         # Build example content: fill slots into template
         example_content = template
         for slot_key, slot_val in slot_fillings.items():
             example_content = example_content.replace(f"{{{slot_key}}}", slot_val)
 
-        example = PatternExample(
-            pattern_id=pattern.id,
-            raw_text_id=raw_text.id,
-            slot_fillings=slot_fillings if slot_fillings else None,
-            content=example_content,
+        await db.execute(
+            pg_insert(PatternExample)
+            .values(
+                pattern_id=pattern.id,
+                raw_text_id=raw_text.id,
+                slot_fillings=slot_fillings if slot_fillings else None,
+                content=example_content,
+            )
+            .on_conflict_do_nothing(constraint="uq_pattern_example_content")
         )
-        db.add(example)
 
         # Assign tags
         tag_names = assign_tags(template, example_content)
         for tag_name in tag_names:
-            tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
-            tag = tag_result.scalar_one_or_none()
-            if tag is None:
-                tag = Tag(name=tag_name, category=get_tag_category(tag_name))
-                db.add(tag)
-                await db.flush()
+            tag = await _get_or_create_tag(db, tag_name, get_tag_category(tag_name))
 
             await db.execute(
                 pg_insert(PatternTag)
